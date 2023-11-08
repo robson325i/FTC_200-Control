@@ -1,13 +1,15 @@
-﻿using System.Globalization;
+﻿using System.Drawing;
+using System.Globalization;
 using System.IO.Ports;
 using System.Text;
+using static System.Windows.Forms.AxHost;
 
 namespace FTC_200_Control
 {
     internal class Ftc200
     {
-        private SerialPort _serialPort;
-        private CultureInfo _culture = CultureInfo.GetCultureInfo("en_us");
+        private readonly SerialPort _serialPort;
+        private readonly CultureInfo _culture = CultureInfo.GetCultureInfo("en_us");
 
         public Ftc200(string comPort)
         {
@@ -59,7 +61,7 @@ namespace FTC_200_Control
             byte[] response = new byte[returnCnt + 3];
             _serialPort.Write(packetBytes, 0, byteCnt);
 
-            Thread.Sleep(100);
+            Thread.Sleep(50);
 
             // Ler a resposta
             _serialPort.Read(response, 0, response.Length);
@@ -80,7 +82,7 @@ namespace FTC_200_Control
         public string GetSerialNumber()
         {
             byte[] outgoingPacket = new byte[4];
-            
+
             // Buscar número de série...
             outgoingPacket[0] = 0x1B;
             outgoingPacket[1] = 0x43; // Get serial number
@@ -383,15 +385,96 @@ namespace FTC_200_Control
             byte[] outgoingPacket = new byte[5];
             // configurar estado da alta tensão...
             // formato do packet:
-            //   0       1          2          3        4        5
-            // [ESC] [COMMAND] [NUM_BYTES] [DATA_1] [DATA_2] [CHKSUM]
+            //   0       1          2          3        4
+            // [ESC] [COMMAND] [NUM_BYTES] [DATA_1] [CHKSUM]
             outgoingPacket[0] = 0x1B;
-            outgoingPacket[1] = 0x5A;                  // Get high voltage state
+            outgoingPacket[1] = 0x5A;                  // Set high voltage state
             outgoingPacket[2] = 2;                     // [NUM_BYTES] = 2
             outgoingPacket[3] = (byte)(state ? 1 : 0); // [DATA_1] = (0 = off) (1 = on) 
             outgoingPacket[4] = CalCheckSum(outgoingPacket, 3);
 
             SerialSendPacket(outgoingPacket, outgoingPacket.Length, 3);
+        }
+
+        public void SetVoltageSetPoint(double voltageSetPoint)
+        {
+            double maxSetPoint = GetMaximumHv();
+            double minSetPoint = GetMinimumHv();
+
+            if (voltageSetPoint > maxSetPoint || voltageSetPoint < minSetPoint)
+            {
+                throw new Exception("Tensão fora de parâmetro");
+            }
+
+            byte wholeportion = (byte)Math.Truncate(voltageSetPoint);
+            byte decimalportion = (byte)(voltageSetPoint % 1);
+
+            byte[] outgoingPacket = new byte[5];
+
+            // configurar set point da alta tensão...
+            // formato do packet:
+            //   0       1          2          3        4        5
+            // [ESC] [COMMAND] [NUM_BYTES] [DATA_1] [DATA_2] [CHKSUM]
+
+            outgoingPacket[0] = 0x1B;
+            outgoingPacket[1] = 0x4D;                  // Set high voltage set point
+            outgoingPacket[2] = 3;                     // [NUM_BYTES] = 3
+            outgoingPacket[3] = wholeportion;          // [DATA_1] = Whole number portion of set point
+            outgoingPacket[4] = decimalportion;        // [DATA_2] = Decimal portion of set point
+            outgoingPacket[5] = CalCheckSum(outgoingPacket, 4);
+
+            byte[] res = SerialSendPacket(outgoingPacket, outgoingPacket.Length, 4);
+
+            // formato do packet de resposta:
+            //   0       1          2          3        4         5        6
+            // [ESC] [COMMAND] [NUM_BYTES] [DATA_1] [DATA_2]  [DATA_3] [CHKSUM]
+
+            if (res[4] != wholeportion || res[5] != decimalportion)
+            {
+                throw new Exception("Tensão retornada é diferente da enviada");
+            }
+        }
+
+        public void SetEmissionCurrentSetPoint(double voltageSetPoint)
+        {
+            double maxSetPoint = GetMaximumEmissionCurrent();
+            double minSetPoint = GetMinimumEmissionCurrent();
+
+            if (voltageSetPoint > maxSetPoint || voltageSetPoint < minSetPoint)
+            {
+                throw new Exception("Corrente de emisão fora de parâmetro");
+            }
+
+            ushort wholeportion = (ushort)Math.Truncate(voltageSetPoint);
+            byte wholeportionhigh = (byte)(wholeportion >> 8);
+            byte wholeportionlow = (byte)(wholeportion & 0xff);
+            byte decimalportion = (byte)(voltageSetPoint % 1);
+
+            byte[] outgoingPacket = new byte[5];
+
+            // configurar set point da corrente de emissão...
+            // formato do packet:
+            //   0       1          2          3        4        5
+            // [ESC] [COMMAND] [NUM_BYTES] [DATA_1] [DATA_2] [CHKSUM]
+
+            outgoingPacket[0] = 0x1B;
+            outgoingPacket[1] = 0x55;                  // Set high voltage set point
+            outgoingPacket[2] = 3;                     // [NUM_BYTES] = 3
+            outgoingPacket[3] = wholeportionhigh;      // [DATA_1] = Whole number portion of set point (high byte)
+            outgoingPacket[4] = wholeportionlow;       // [DATA_2] = Whole number portion of set point (low byte)
+            outgoingPacket[5] = decimalportion;        // [DATA_3] = Decimal portion of set point
+            outgoingPacket[6] = CalCheckSum(outgoingPacket, 4);
+
+            byte[] res = SerialSendPacket(outgoingPacket, outgoingPacket.Length, 5);
+
+            // formato do packet de resposta:
+            //   0       1          2          3        4        5        6        7
+            // [ESC] [COMMAND] [NUM_BYTES] [DATA_1] [DATA_2] [DATA_3] [DATA_4] [CHKSUM]
+
+            if (res[4] != wholeportionhigh || res[5] != wholeportionlow || res[6] != decimalportion)
+            {
+                throw new Exception("Corrente retornada é diferente da enviada");
+            }
         }
     }
 }
